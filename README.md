@@ -8,7 +8,7 @@ A small fraction of videos on YouTube are published under a [Creative Commons At
 
 To catalog only Creative Commons YouTube videos that have not been license-laundered, we take the following approach:
 
-1. Manually curate a list of YouTube channels that have uploaded some content with a CC license
+1. Curate a list of YouTube channels that have uploaded some content with a CC license
 2. Manually filter out channels that do not upload original content
 3. Collect metadata (video name, ID, etc.) for the CC videos from the remaining channels
 
