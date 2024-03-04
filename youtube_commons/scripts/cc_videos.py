@@ -6,8 +6,8 @@ import sqlite3
 import isodate
 from tqdm.auto import tqdm
 
-from yt_commons.youtube_api import YouTubeAPICaller
-from yt_commons.database import VideoDatabase
+from youtube_commons.youtube_api import YouTubeAPICaller
+from youtube_commons.database import VideoDatabase
 
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(name)s: %(levelname)s: %(message)s")
