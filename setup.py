@@ -23,7 +23,7 @@ setup(
     install_requires=requirements,
     entry_points={
         'console_scripts': [
-            'cc-videos = yt_commons.scripts.cc_videos:main',
+            'cc-videos = youtube_commons.scripts.cc_videos:main',
         ],
     },
     # Add classifiers to specify the audience and maturity of your package
