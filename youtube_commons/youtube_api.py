@@ -6,7 +6,6 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 
-logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(name)s: %(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -31,7 +30,7 @@ def cycle_api_keys(func):
             if e.status_code == 403:
                 if len(self.api_keys) == 0:
                     raise Exception("No more API keys")
-                logger.info("Cycling API keys")
+                logger.debug("Cycling API keys")
                 self.init_caller()
                 return func(self, *args, **kwargs)
             else:
