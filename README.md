@@ -4,7 +4,7 @@ A project cataloging and transcribing Creative Commons videos posted to YouTube
 
 ## How are we doing this?
 
-A small fraction of videos on YouTube are published under a [Creative Commons Attribution (CC-BY) license](https://support.google.com/youtube/answer/2797468?hl=en). However, not all of these videos are original content so it is unclear as to whether the uploader has the right to upload that content under a permissive license. In other words, some of these Creative Commons YouTube videos are cases of [license laundering](https://en.wikipedia.org/wiki/Licence_laundering). 
+A small fraction of videos on YouTube are published under a [Creative Commons Attribution (CC-BY) license](https://support.google.com/youtube/answer/2797468?hl=en). Although YouTube attempts to prevent this, not all of Creative Commons videos are original content so it is unclear as to whether the uploader has the right to upload that content under a permissive license. In other words, some of these Creative Commons YouTube videos are cases of [license laundering](https://en.wikipedia.org/wiki/Licence_laundering). 
 
 To catalog only Creative Commons YouTube videos that have not been license-laundered, we take the following approach:
 
