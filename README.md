@@ -1,6 +1,6 @@
 # youtube-commons
 
-A project cataloging Creative Commons videos posted to YouTube
+A project cataloging and transcribing Creative Commons videos posted to YouTube
 
 ## How are we doing this?
 
@@ -32,3 +32,6 @@ Total Time: 299432.235 hours
 Average Channel Time: 189.274 hours
 Average Video Time: 22.728 minutes
 ```
+7. Run `cc-videos download-videos --db-path DB_PATH --output-dir OUTPUT_DIR [--overwrite OVERWRITE] [--max-videos MAX_VIDEOS] [--num-shards NUM_SHARDS] --shard SHARD`
+> This command downloads videos cataloged in the database. Since this step can be slow, this command can be run multiple times concurrently on different `SHARD`s. The result of this command is a collection of audio files downloaded into `OUTPUT_DIR`. The audio file for a particular video id `VIDEO_ID` can be found at `OUTPUT_DIR/VIDEO_ID[:2]/VIDEO_ID.m4a`.
+
