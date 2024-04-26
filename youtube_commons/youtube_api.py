@@ -24,18 +24,17 @@ def batched(n):
 def cycle_api_keys(func):
     @wraps(func)
     def wrapper(self, *args, **kwargs):
-        try:
-            return func(self, *args, **kwargs)
-        except HttpError as e:
-            if e.status_code == 403:
-                if len(self.api_keys) == 0:
-                    raise Exception("No more API keys")
-                logger.debug("Cycling API keys")
-                self.init_caller()
+        while len(self.api_keys) > 0:
+            try:
                 return func(self, *args, **kwargs)
-            else:
-                raise
+            except HttpError as e:
+                if e.status_code == 403:
+                    self.init_caller()
+                    logger.info(f"Cycled API keys. {len(self.api_keys) + 1} keys remaining.")
+                else:
+                    raise e
 
+        raise Exception("No more API keys")
     return wrapper
         
 
@@ -48,42 +47,52 @@ class YouTubeAPICaller:
         self.caller = build("youtube", "v3", developerKey=self.api_keys.pop())
     
     @cycle_api_keys
-    @batched(50)
-    def get_channel_metadata(self, channel_ids):
-        if len(channel_ids) == 0:
-            return []
-
-        request = self.caller.channels().list(part="snippet", id=channel_ids)
+    def channels_api_call(self, part, channel_ids):
+        request = self.caller.channels().list(part=part, id=channel_ids)
         metadata = request.execute()
-        for item in metadata["items"]:
-            yield item
+        return metadata
     
     @cycle_api_keys
-    @batched(50)
-    def get_video_metadata(self, video_ids):
-        if len(video_ids) == 0:
-            return []
-
-        request = self.caller.videos().list(part="snippet,contentDetails,status", id=video_ids)
+    def videos_api_call(self, part, video_ids):
+        request = self.caller.videos().list(part=part, id=video_ids)
         metadata = request.execute()
-        for item in metadata["items"]:
-            yield item
-
+        return metadata
+    
     @cycle_api_keys
-    def get_cc_videos_from_channel(self, channel_id, skip_video_ids=set()):
-        request = self.caller.channels().list(part="contentDetails", id=channel_id)
-        channel_metadata = request.execute()
-
-        uploads_playlist_id = channel_metadata["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
-        next_page_token = None
-        while True:
-            request = uploads_playlist_metadata = self.caller.playlistItems().list(part="contentDetails",
-                    playlistId=uploads_playlist_id,
+    def playlist_api_call(self, part, playlist_id, next_page_token):
+        request = self.caller.playlistItems().list(part=part,
+                    playlistId=playlist_id,
                     maxResults=50,
                     pageToken=next_page_token
             )
-            response = request.execute()
+        response = request.execute()
+        return response
 
+
+    @batched(50)
+    def get_channel_metadata(self, channel_ids):
+        if len(channel_ids) == 0:
+            return
+
+        metadata = self.channels_api_call("snippet", channel_ids)
+        for item in metadata["items"]:
+            yield item
+    
+    @batched(50)
+    def get_video_metadata(self, video_ids):
+        if len(video_ids) == 0:
+            return 
+        
+        metadata = self.videos_api_call("snippet,contentDetails,status", video_ids)
+        for item in metadata["items"]:
+            yield item
+
+    def get_cc_videos_from_channel(self, channel_id, skip_video_ids=set()):
+        channel_metadata = self.channels_api_call("contentDetails", channel_id)
+        uploads_playlist_id = channel_metadata["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+        next_page_token = None
+        while True:
+            response = self.playlist_api_call("contentDetails", uploads_playlist_id, next_page_token)
             video_ids = [item["contentDetails"]["videoId"] for item in response["items"] if item["contentDetails"]["videoId"] not in skip_video_ids]
             for video_metadata in self.get_video_metadata(video_ids):
                 if video_metadata["status"]["license"] == "creativeCommon":
