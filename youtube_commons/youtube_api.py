@@ -89,10 +89,18 @@ class YouTubeAPICaller:
 
     def get_cc_videos_from_channel(self, channel_id, skip_video_ids=set()):
         channel_metadata = self.channels_api_call("contentDetails", channel_id)
+        if "items" not in channel_metadata:
+            return
+
         uploads_playlist_id = channel_metadata["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
         next_page_token = None
         while True:
-            response = self.playlist_api_call("contentDetails", uploads_playlist_id, next_page_token)
+            try:
+                response = self.playlist_api_call("contentDetails", uploads_playlist_id, next_page_token)
+            except HttpError as e:
+                logger.info(f"Skipping channel {channel_id}: {e.reason}")
+                return
+
             video_ids = [item["contentDetails"]["videoId"] for item in response["items"] if item["contentDetails"]["videoId"] not in skip_video_ids]
             for video_metadata in self.get_video_metadata(video_ids):
                 if video_metadata["status"]["license"] == "creativeCommon":
