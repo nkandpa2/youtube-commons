@@ -6,7 +6,6 @@ import io
 import os
 import tempfile
 
-import youtube_dl
 import yt_dlp
 
 
