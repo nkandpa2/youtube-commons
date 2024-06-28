@@ -23,10 +23,6 @@ class QuietLogger:
         pass
 
 
-class DownloadError(Exception):
-    pass
-
-
 class VideoDownloader:
     def __init__(self, output_dir):
         self.output_dir = output_dir
@@ -67,8 +63,8 @@ class VideoDownloader:
             try:
                 download_metadata = ydl.extract_info(video_url, download=True)
             except yt_dlp.utils.DownloadError as e:
-                logger.debug(f"Error occurred when downloading {video_id}: {e}")
-                raise DownloadError
+                logger.info(f"Error occurred when downloading {video_id}: {e}")
+                raise e
         
         download_path = ydl.prepare_filename(download_metadata)
         nbytes = os.path.getsize(download_path)

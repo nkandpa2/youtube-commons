@@ -1,21 +1,21 @@
 import argparse
 import os
 import logging
-import sqlite3
 import hashlib
 import itertools
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import random
+from glob import glob
 
 import isodate
 from tqdm.auto import tqdm
 from faster_whisper import WhisperModel
 
+from youtube_commons import utils
 from youtube_commons.youtube_api import YouTubeAPICaller
 from youtube_commons.database import VideoDatabase
-from youtube_commons.download import VideoDownloader, DownloadError
-#from youtube_commons.transcription import WhisperXTranscriber
+from youtube_commons.download import VideoDownloader
 
 
 logger = logging.getLogger(__name__)
@@ -65,7 +65,8 @@ def parse_args():
     download_and_transcribe_parser = subparser.add_parser("download-and-transcribe", description="Download videos and transcribe videos to text")
     download_and_transcribe_parser.add_argument("--db-path", required=True, help="Path to video database")
     download_and_transcribe_parser.add_argument("--output-dir", required=True, help="Path to output directory")
-    download_and_transcribe_parser.add_argument("--overwrite", default=False, type=bool, help="Overwrite existing transcriptions in the output directory")
+    download_and_transcribe_parser.add_argument("--overwrite", default=False, action="store_true", help="Overwrite existing transcriptions in the output directory")
+    download_and_transcribe_parser.add_argument("--keep-audio", default=False, action="store_true", help="Keep audio files (default behavior is to discard after transcription)")
 
     download_and_transcribe_parser.add_argument("--max-videos", default=-1, type=int, help="Maximum number of videos to download")
     download_and_transcribe_parser.add_argument("--num-shards", default=100, type=int, help="Number of total shards")
@@ -76,7 +77,6 @@ def parse_args():
     download_and_transcribe_parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="CPU or GPU inference")
     download_and_transcribe_parser.add_argument("--n-procs", default=10, type=int, help="Number of transcription processes to run in parallel")
     download_and_transcribe_parser.set_defaults(func=download_and_transcribe_videos)
-
 
     return parser.parse_args()
 
@@ -101,13 +101,6 @@ def setup_logger(log_file):
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
-
-def video_id_to_shard(video_id, num_shards):
-    h = hashlib.sha256(video_id.encode())
-    h_bytes = h.digest()
-    h_int = int.from_bytes(h_bytes, byteorder='big')
-    return h_int % num_shards
-    
 
 def add_channels(args):
     db = VideoDatabase(args.db_path)
@@ -170,37 +163,57 @@ def print_stats(args):
     logger.info(f"Average Video Time: {total_seconds / 60 / num_videos:.3f} minutes")
 
 
-def download(args, video_id):
-    downloader = VideoDownloader(os.path.join(args.output_dir, f"shard_{args.shard}_of_{args.num_shards}"))
+def download(args, video_id, output_dir):
+    downloader = VideoDownloader(output_dir)
     return downloader.download(video_id, overwrite=args.overwrite)
 
 
 def download_videos(args):
+    output_dir = os.path.join(args.output_dir, f"shard_{args.shard}_of_{args.num_shards}")
+    os.makedirs(output_dir, exist_ok=True)
+
+    logger.info(f"Loading videos database from {args.db_path}")
     db = VideoDatabase(args.db_path)
     videos = db.get_all_videos()
     video_ids = [video[0] for video in videos]
+
+    # Filter to only video_ids that fall in this shard
+    logger.info("Filtering videos")
+    video_ids = list(filter(lambda v: utils.video_id_to_shard(v, args.num_shards) == args.shard, video_ids))
+
+    # Filter to only video_ids that have not already been transcribed
+    if not args.overwrite:
+        existing_video_ids = utils.get_existing_video_ids(output_dir, filter_exts=[".part"])
+        video_ids = [v for v in video_ids if v not in existing_video_ids]
+   
+    # Shuffle so that progress bar estimates aren't biased by collection order
+    logger.info("Shuffling videos")
+    random.shuffle(video_ids)
     
-    pbar = tqdm(video_ids)
-    postfix = {"Downloaded": 0, "Previously Downloaded": 0, "Skipped": 0, "Errors": 0}
-
+    # Compute total duration of the videos for progress bar 
+    logger.info("Computing total duration of video set")
+    video_ids_set = set(video_ids)
+    video_duration_dict = {video[0]: video[-1] for video in videos if video[0] in video_ids_set}
+    total_duration = sum(video_duration_dict.values())
+    logger.info(f"Downloading {total_duration/60/60:.3f} hours of video")
+ 
+    postfix = {"Files Downloaded": 0, "Errors": 0, "Downloaded Size (GB)": 0}
+    pbar = tqdm(video_ids, total=total_duration, unit="video seconds")
     for video_id in pbar:
-        if video_id_to_shard(video_id, args.num_shards) == args.shard:
-            try:
-                ret = download(args, video_id)
-            except DownloadError:
-                postfix["Errors"] += 1
-                continue
-            
-            if ret is None:
-                postfix["Previously Downloaded"] += 1
-            else:
-                postfix["Downloaded"] += 1
-        else:
-            postfix["Skipped"] += 1
+        try:
+            download_info = download(args, video_id, output_dir)
+        except:
+            postfix["Errors"] += 1
+            pbar.set_postfix(postfix)
+            continue
+        
+        postfix["Downloaded Size (GB)"] += download_info["nbytes"] / 1e9
+        postfix["Files Downloaded"] += 1
 
-        if postfix["Downloaded"] == args.max_videos:
+        if postfix["Files Downloaded"] == args.max_videos:
             break
-
+        
+        pbar.update(video_duration_dict[video_id])
         pbar.set_postfix(postfix)
 
 
@@ -208,47 +221,50 @@ def transcribe(args, file):
     model = WhisperModel(args.model_size, device=args.device, compute_type=args.compute_type)
     segments, info = model.transcribe(file, vad_filter=True, beam_size=5)
     transcript = "".join([segment.text for segment in segments])
-    return transcript
+    return {"transcript": transcript, "nbytes": len(transcript.encode("utf-8", "ignore"))}
 
 
 def transcribe_videos(args):
     os.makedirs(args.output_dir, exist_ok=True)
-
-    directories = os.listdir(args.input_dir)
-    files = list(itertools.chain(*[[os.path.join(args.input_dir, d, f) for f in os.listdir(os.path.join(args.input_dir, d)) if f.endswith(".m4a")] for d in directories]))
-    logger.info(f"Found {len(files)} audio files")
+    
+    video_ids = utils.get_existing_video_ids(args.input_dir, filter_exts=[".part"])
+    logger.info(f"Found {len(video_ids)} audio files")
 
     # Filter to only files that have not already been transcribed (if --overwrite is not specified)
-    untranscribed_files = []
-    for file in files:
-        output_file = os.path.splitext(os.path.join(args.output_dir, os.path.relpath(file, start=args.input_dir)))[0] + ".txt"
-        if not os.path.exists(output_file) or args.overwrite:
-            untranscribed_files.append(file)
-    logger.info(f"Transcribing {len(untranscribed_files)}/{len(files)} files")
+    if not args.overwrite:
+        already_transcribed = utils.get_existing_video_ids(args.output_dir, keep_exts=[".txt"])
+        video_ids = [v for v in video_ids if v not in already_transcribed]
+    logger.info(f"Transcribing {len(video_ids)} files")
+    
+    files = [glob(utils.video_id_to_path(args.input_dir, v, ".*"))[0] for v in video_ids]
 
+    postfix = {"Transcribed Size (MB)": 0}
     with ProcessPoolExecutor(max_workers=args.n_procs) as executor:
-        future_to_file = {executor.submit(transcribe, args, file): file for file in files}
-
-        for future in tqdm(as_completed(future_to_file)):
-            file = future_to_file[future]
-            transcript = future.result()
+        future_to_video_id = {executor.submit(transcribe, args, file): video_id for file, video_id in zip(files, video_ids)}
+        
+        pbar = tqdm(as_completed(future_to_video_id))
+        for future in pbar:
+            video_id = future_to_video_id[future]
+            transcribe_info = future.result()
             
-            output_file = os.path.splitext(os.path.join(args.output_dir, os.path.relpath(file, start=args.input_dir)))[0] + ".txt"
+            output_file = utils.video_id_to_path(args.output_dir, video_id, ".txt")
             os.makedirs(os.path.dirname(output_file), exist_ok=True)
             with open(output_file, "w") as f:
-                f.write(transcript)
+                f.write(transcribe_info["transcript"])
+
+            postfix["Transcribed Size (MB)"] += transcribe_info["nbytes"] / 1e6
+            pbar.set_postfix(postfix)
 
 
-def download_and_transcribe(args, video_id):
+def download_and_transcribe(args, video_id, output_dir):
     try:
-        video = download(args, video_id)
-    except DownloadError:
-        return
-    if video is None:
-        return
-    transcript = transcribe(args, video)
-    os.remove(video)
-    return transcript
+        download_info = download(args, video_id, output_dir)
+    except:
+        return None
+    if download_info is None:
+        return None
+    transcribe_info = transcribe(args, download_info["path"])
+    return {"download": download_info, "transcribe": transcribe_info}
 
 
 def download_and_transcribe_videos(args):
@@ -260,42 +276,52 @@ def download_and_transcribe_videos(args):
     videos = db.get_all_videos()
     video_ids = [video[0] for video in videos]
     
-    logger.info("Filtering videos")
     # Filter to only video_ids that fall in this shard
-    video_ids = list(filter(lambda v: video_id_to_shard(v, args.num_shards) == args.shard, video_ids))
+    logger.info("Filtering videos")
+    video_ids = list(filter(lambda v: utils.video_id_to_shard(v, args.num_shards) == args.shard, video_ids))
+
     # Filter to only video_ids that have not already been transcribed
     if not args.overwrite:
-        video_ids = list(filter(lambda v: not os.path.exists(os.path.join(output_dir, v[:2], f"{v}.txt")), video_ids))
+        existing_video_ids = utils.get_existing_video_ids(output_dir, keep_exts=[".txt"])
+        video_ids = [v for v in video_ids if v not in existing_video_ids]
     
-    # Shuffle so that order isn't biased by collection order
+    # Shuffle so that progress bar estimates aren't biased by collection order
+    logger.info("Shuffling videos")
     random.shuffle(video_ids)
 
     # Compute total duration of the videos for progress bar 
-    video_duration_dict = {video[0]: video[-1] for video in videos if video[0] in video_ids}
+    logger.info("Computing total duration of video set")
+    video_ids_set = set(video_ids)
+    video_duration_dict = {video[0]: video[-1] for video in videos if video[0] in video_ids_set}
     total_duration = sum(video_duration_dict.values())
     logger.info(f"Downloading and transcribing {total_duration/60/60:.3f} hours of video")
     
-    postfix = {"Files Processed": 0, "Errors": 0}
+    postfix = {"Files Processed": 0, "Errors": 0, "Transcribed Size (MB)": 0, "Downloaded Size (GB)": 0}
     with ProcessPoolExecutor(max_workers=args.n_procs) as executor:
-        future_to_video_id = {executor.submit(download_and_transcribe, args, video_id): video_id for video_id in video_ids}
+        future_to_video_id = {executor.submit(download_and_transcribe, args, video_id, output_dir): video_id for video_id in video_ids}
         
-        pbar = tqdm(as_completed(future_to_video_id), total=total_duration, unit="video seconds")
+        pbar = tqdm(as_completed(future_to_video_id), total=total_duration, unit=" video seconds")
         for future in pbar:
             video_id = future_to_video_id[future]
-            transcript = future.result()
+            info = future.result()
             
-            if transcript is not None:
-                output_file = os.path.join(output_dir, video_id[:2], f"{video_id}.txt")
+            if info is not None:
+                output_file = utils.video_id_to_path(output_dir, video_id, ".txt")
                 with open(output_file, "w") as f:
-                    f.write(transcript)
-
+                    f.write(info["transcribe"]["transcript"])
                 postfix["Files Processed"] += 1
+                postfix["Transcribed Size (MB)"] += info["transcribe"]["nbytes"] / 1e6
+                postfix["Downloaded Size (GB)"] += info["download"]["nbytes"] / 1e9
+                pbar.update(video_duration_dict[video_id])
             else:
                 postfix["Errors"] += 1
+            
+            if not args.keep_audio:
+                if os.path.exists(info["download"]["path"]):
+                    os.remove(info["download"]["path"])
 
-            pbar.update(video_duration_dict[video_id])
             pbar.set_postfix(postfix)
-
+           
 
 def main():
     args = parse_args()
