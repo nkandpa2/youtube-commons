@@ -51,14 +51,16 @@ class VideoDatabase:
             return None
         else:
             video_id, channel_id, title, description, tags, published_time, cataloged_time, duration = video_result[0]
-            return video_id, channel_id, title, description, json.dumps(tags), published_time, cataloged_time, duration
+            return video_id, channel_id, title, description, json.loads(tags), published_time, cataloged_time, duration
     
     def get_channel_video_ids(self, channel_id):
         video_result = self.execute("SELECT video_id FROM videos WHERE channel_id = ?", (channel_id,))
         return [video_id for (video_id,) in video_result]
 
     def get_all_videos(self):
-        return self.execute("SELECT * FROM videos")
+        videos = self.execute("SELECT * FROM videos")
+        return [(v_id, c_id, title, desc, json.loads(tags), pt, ct, dur) for (v_id, c_id, title, desc, tags, pt, ct, dur) in videos]
+
 
     def add_channel(self, channel_id, channel_name):
         try:

@@ -8,6 +8,8 @@ import tempfile
 
 import yt_dlp
 
+from youtube_commons import utils
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,13 +37,13 @@ class VideoDownloader:
         }
     
     def get_output_dir(self, video_id):
-        return os.path.join(self.output_dir, video_id[:2])
+        return os.path.basename(utils.video_id_to_path(self.output_dir, video_id, ""))
     
     def get_output_file_tmpl(self, video_id):
-        return os.path.join(self.get_output_dir(video_id), f"{video_id}.%(ext)s")
+        return utils.video_id_to_path(self.output_dir, video_id, ".%(ext)s")
     
     def get_output_file_glob(self, video_id):
-        return os.path.join(self.get_output_dir(video_id), f"{video_id}.*")
+        return utils.video_id_to_path(self.output_dir, video_id, ".*")
 
     def get_video_url(self, video_id):
         return f"https://www.youtube.com/watch?v={video_id}"
@@ -51,21 +53,15 @@ class VideoDownloader:
         os.makedirs(output_dir, exist_ok=True)
         
         if len(glob(self.get_output_file_glob(video_id))) > 0 and not overwrite:
-            logger.debug(f"Skipping {video_id} -- output directory already exists")
+            logger.info(f"Skipping download for {video_id} -- output file already exists")
             return None
 
         opts = self.opts.copy()
         opts["outtmpl"] = self.get_output_file_tmpl(video_id)
 
+        video_url = self.get_video_url(video_id)
         with yt_dlp.YoutubeDL(opts) as ydl:
-            video_url = self.get_video_url(video_id)
-
-            try:
-                download_metadata = ydl.extract_info(video_url, download=True)
-            except yt_dlp.utils.DownloadError as e:
-                logger.info(f"Error occurred when downloading {video_id}: {e}")
-                raise e
-        
+            download_metadata = ydl.extract_info(video_url, download=True)
         download_path = ydl.prepare_filename(download_metadata)
         nbytes = os.path.getsize(download_path)
         return {"path": download_path, "nbytes": nbytes}
