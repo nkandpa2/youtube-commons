@@ -8,6 +8,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 import random
 from glob import glob
+import traceback
 
 import isodate
 from tqdm.auto import tqdm
@@ -186,6 +187,7 @@ def download(args, video_id, output_dir):
         return downloader.download(video_id, overwrite=args.overwrite)
     except Exception as e:
         logger.error(f"Failed to download {video_id}: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 
@@ -250,6 +252,7 @@ def transcribe(args, video_id, input_dir, output_dir):
 
     except Exception as e:
         logger.error(f"Failed to transcribe {video_id}: {e}")
+        logger.error(f"Traceback: {traceback.format_exc()}")
         return None
 
 
