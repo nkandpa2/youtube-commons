@@ -35,13 +35,13 @@ class VideoDownloader:
             "noprogress": True,
             "logger": QuietLogger(),
         }
-    
+
     def get_output_dir(self, video_id):
         return os.path.basename(utils.video_id_to_path(self.output_dir, video_id, ""))
-    
+
     def get_output_file_tmpl(self, video_id):
         return utils.video_id_to_path(self.output_dir, video_id, ".%(ext)s")
-    
+
     def get_output_file_glob(self, video_id):
         return utils.video_id_to_path(self.output_dir, video_id, ".*")
 
@@ -51,9 +51,11 @@ class VideoDownloader:
     def download(self, video_id, overwrite=False):
         output_dir = self.get_output_dir(video_id)
         os.makedirs(output_dir, exist_ok=True)
-        
+
         if len(glob(self.get_output_file_glob(video_id))) > 0 and not overwrite:
-            logger.info(f"Skipping download for {video_id} -- output file already exists")
+            logger.info(
+                f"Skipping download for {video_id} -- output file already exists"
+            )
             return None
 
         opts = self.opts.copy()
