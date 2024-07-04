@@ -51,12 +51,15 @@ class VideoDownloader:
     def download(self, video_id, overwrite=False):
         output_dir = self.get_output_dir(video_id)
         os.makedirs(output_dir, exist_ok=True)
-
-        if len(glob(self.get_output_file_glob(video_id))) > 0 and not overwrite:
+        
+        output_files = glob(self.get_output_file_glob(video_id))
+        if len(output_files) > 0 and not overwrite:
             logger.info(
                 f"Skipping download for {video_id} -- output file already exists"
             )
-            return None
+            output_file = output_files[0]
+            nbytes = os.path.getsize(output_file)
+            return {"path": output_file, "nbytes": nbytes}
 
         opts = self.opts.copy()
         opts["outtmpl"] = self.get_output_file_tmpl(video_id)

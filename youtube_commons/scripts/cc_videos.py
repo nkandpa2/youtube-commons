@@ -434,15 +434,19 @@ def download_videos(args):
 
 def transcribe(args, video_id, input_dir, output_dir):
     try:
-        file = glob(utils.video_id_to_path(input_dir, video_id, ".*"))[0]
-
+        input_files = glob(utils.video_id_to_path(input_dir, video_id, ".*"))
+        if len(input_files) == 0:
+            logger.error(f"No audio file downloaded for {video_id}")
+            return None
+        input_file = input_files[0]
+        
         model = WhisperModel(
             args.model_size,
             device=args.device,
             compute_type=args.compute_type,
             cpu_threads=args.n_threads,
         )
-        segments, info = model.transcribe(file, vad_filter=True, beam_size=5)
+        segments, info = model.transcribe(input_file, vad_filter=True, beam_size=5)
         transcript = "".join([segment.text for segment in segments])
 
         output_path = utils.video_id_to_path(output_dir, video_id, ".txt")
